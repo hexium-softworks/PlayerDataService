@@ -3,10 +3,71 @@ packages:
 
 allowBuilds:
   '@hexium-softworks/log': true
+  '@hexium-softworks/replicationservice': true
+  '@quenty/attributeutils': true
   "@quenty/baseobject": true
+  '@quenty/binarysearch': true
+  '@quenty/bindable-utils': true
+  '@quenty/bindtocloseservice': true
+  '@quenty/brio': true
+  '@quenty/cancellabledelay': true
+  '@quenty/canceltoken': true
+  '@quenty/characterutils': true
+  '@quenty/cmdrservice': true
+  '@quenty/collectionserviceutils': true
+  "@quenty/datastore": true
+  '@quenty/deferred': true
+  '@quenty/ducktype': true
+  '@quenty/enums': true
+  '@quenty/enumutils': true
+  '@quenty/grouputils': true
+  '@quenty/insertserviceutils': true
+  '@quenty/instance-path': true
+  '@quenty/instanceutils': true
+  '@quenty/jestutils': true
   "@quenty/loader": true
+  '@quenty/lrucache': true
   "@quenty/maid": true
+  '@quenty/math': true
+  '@quenty/messagingserviceutils': true
   "@quenty/nevermore-test-runner": true
+  '@quenty/observablecollection': true
+  '@quenty/pagesutils': true
+  '@quenty/permissionprovider': true
+  '@quenty/playermock': true
+  '@quenty/playerutils': true
+  "@quenty/promise": true
+  '@quenty/promisemaid': true
+  '@quenty/remotefunctionutils': true
+  '@quenty/remoting': true
+  "@quenty/rx": true
+  '@quenty/rxsignal': true
   "@quenty/servicebag": true
   "@quenty/signal": true
+  '@quenty/statestack': true
+  '@quenty/steputils': true
+  '@quenty/string': true
+  '@quenty/symbol': true
   "@quenty/table": true
+  '@quenty/templateprovider': true
+  '@quenty/throttle': true
+  '@quenty/tie': true
+  '@quenty/tuple': true
+  '@quenty/typeutils': true
+  '@quenty/valuebaseutils': true
+  '@quenty/valueobject': true
+
+minimumReleaseAgeExclude:
+  - '@hexium-softworks/replicationservice@0.1.0'
+  - '@quenty/bindtocloseservice@8.45.0'
+  - '@quenty/characterutils@12.45.0'
+  - '@quenty/cmdrservice@13.62.0'
+  - '@quenty/datastore@13.57.0'
+  - '@quenty/grouputils@10.32.0'
+  - '@quenty/observablecollection@12.52.0'
+  - '@quenty/permissionprovider@14.53.0'
+  - '@quenty/playermock@1.10.0'
+  - '@quenty/playerutils@8.45.0'
+  - '@quenty/remoting@12.45.0'
+  - '@quenty/templateprovider@11.53.0'
+  - '@quenty/tie@10.51.0'

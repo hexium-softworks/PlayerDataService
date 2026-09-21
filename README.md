@@ -1,465 +1,232 @@
-# AudioService
+# PlayerDataService
 
-A game-agnostic Nevermore package for Roblox's modern Audio API.
+Schema-driven player data for Nevermore Roblox games.
 
-AudioService builds local audio graphs from `AudioPlayer`, `AudioEmitter`,
-`AudioListener`, `AudioDeviceInput`, `AudioDeviceOutput`, audio effects, and
-`Wire`. It does not create or manage legacy `Sound`, `SoundGroup`, or
-`SoundEffect` instances.
+PlayerDataService wraps Nevermore's `PlayerDataStoreService`; it does not
+replace Nevermore persistence, session locking, autosave, retry behavior,
+staging, mocks, or shutdown handling. Games provide a schema, and this package
+loads one package-owned namespace, reconciles saved data, runs migrations,
+validates mutations, and replicates only approved owner-visible fields through
+ReplicationService.
 
-## Installation
+## Install
 
 ```sh
-pnpm add @hexium-softworks/audioservice
+pnpm add @hexium-softworks/playerdataservice
 ```
 
-This package expects a Roblox runtime with the modern Audio API enabled.
+The package expects Nevermore ServiceBag and datastore packages plus
+`@hexium-softworks/replicationservice`.
 
-## Nevermore Usage
+## Schema
 
-`AudioService` and `AudioServiceClient` are Nevermore services. Require them
-through `ServiceBag`, not by calling methods directly on the module table.
-
-Server:
+Start with a normal template. Plain values are persisted on the server but are
+not sent to the client. Wrap fields in `Schema.Owner(...)` when the owning
+player may see them.
 
 ```lua
-local require = require(script.Parent.loader).load(script)
+local Schema = require("PlayerDataSchema")
 
-local AudioService = require("AudioService")
+return Schema.define({
+	Version = 2,
 
-function GameAudioService:Init(serviceBag)
-	self._audioService = serviceBag:GetService(AudioService)
-end
+	Template = {
+		Currency = Schema.Owner({
+			Coins = Schema.Int(0, { Min = 0 }),
+			Gems = Schema.Int(0, { Min = 0 }),
+		}),
 
-function GameAudioService:Start()
-	self._audioService:RegisterCategories({
-		{ Name = "Music", Volume = 0.8 },
-		{ Name = "SoundEffects", Volume = 1 },
-		{ Name = "Voice", Volume = 1 },
-		{ Name = "Ambience", Volume = 1 },
-	})
-end
-```
+		Progression = Schema.Owner({
+			Level = Schema.Int(1, { Min = 1 }),
+			Experience = Schema.Int(0, { Min = 0 }),
+		}),
 
-Client:
+		Inventory = {
+			Items = Schema.Owner({}),
+		},
 
-```lua
-local require = require(script.Parent.loader).load(script)
-
-local AudioServiceClient = require("AudioServiceClient")
-
-function GameAudioClient:Init(serviceBag)
-	self._audioClient = serviceBag:GetService(AudioServiceClient)
-end
-
-function GameAudioClient:Start()
-	self._audioClient:RegisterCategories({
-		{ Name = "Music", Volume = 0.8 },
-		{ Name = "SoundEffects", Volume = 1 },
-		{ Name = "Voice", Volume = 1 },
-		{ Name = "Ambience", Volume = 1 },
-	})
-end
-```
-
-Keep `Init` lightweight and non-yielding. Register static definitions in
-`Start`, or from another game service after the `ServiceBag` has initialized.
-
-## Model
-
-AudioService treats every playback or voice path as a graph:
-
-```txt
-AudioPlayer -> GraphVolume -> MasterVolume -> CategoryVolume -> Effects -> Output
-AudioPlayer -> GraphVolume -> MasterVolume -> CategoryVolume -> Effects -> Emitter
-AudioDeviceInput -> GraphVolume -> MasterVolume -> CategoryVolume -> Effects -> Output/Emitter
-AudioListener -> AudioDeviceOutput
-```
-
-`Master` is built in. Games can add categories such as `Music`,
-`SoundEffects`, `Voice`, `Ambience`, `Weapons`, `Explosions`, or `Alarms`, then
-wire their settings UI to `SetCategoryVolume()`.
-
-The package creates no remotes, owns no player permission policy, and persists
-no settings. Game code decides what should play, who can speak on a channel, and
-where user settings are stored.
-
-## Shared Definitions
-
-Most games will define categories, assets, and effect presets in one game-owned
-module, then register the relevant definitions on the server and client. This
-keeps the package pure while giving every game a single audio vocabulary.
-
-```lua
-return {
-	Categories = {
-		{ Name = "Music", Volume = 0.8 },
-		{ Name = "SoundEffects", Volume = 1 },
-		{ Name = "Voice", Volume = 1 },
-		{ Name = "Weapons", Volume = 1 },
-		{ Name = "Alarms", Volume = 1 },
-	},
-
-	Effects = {
-		{
-			Name = "Radio",
-			Effects = {
-				{
-					Name = "RadioEQ",
-					ClassName = "AudioEqualizer",
-					Properties = {
-						LowGain = -18,
-						MidGain = 2,
-						HighGain = -10,
-						MidRange = NumberRange.new(300, 3400),
-					},
-				},
-				{
-					Name = "RadioCompressor",
-					ClassName = "AudioCompressor",
-					Properties = {
-						Threshold = -18,
-						Ratio = 4,
-					},
-				},
-			},
+		Internal = {
+			LastReceiptId = "",
 		},
 	},
+})
+```
 
-	Assets = {
-		{
-			Name = "AlarmLoop",
-			Asset = "rbxassetid://123456789",
-			Category = "Alarms",
-			Looping = true,
-			Volume = 0.7,
-			EffectPresets = { "Radio" },
-		},
-	},
+Optional migrations transform data into their key version:
+
+```lua
+Migrations = {
+	[2] = function(data)
+		data.Currency = data.Currency or { Coins = data.Coins or 0, Gems = 0 }
+		data.Coins = nil
+		return data
+	end,
 }
 ```
 
-Register definitions where they are needed:
+Useful declarators:
 
 ```lua
-audioService:RegisterCategories(AudioDefinitions.Categories)
-audioService:RegisterEffects(AudioDefinitions.Effects)
-audioService:RegisterAssets(AudioDefinitions.Assets)
-
-audioClient:RegisterCategories(AudioDefinitions.Categories)
-audioClient:RegisterEffects(AudioDefinitions.Effects)
-audioClient:RegisterAssets(AudioDefinitions.Assets)
-```
-
-## Basic Examples
-
-Play one local UI or gameplay sound:
-
-```lua
-local click = audioClient:Play2D({
-	Name = "ButtonClick",
-	Asset = "rbxassetid://123456789",
-	Category = "SoundEffects",
-	Volume = 0.6,
-})
-
-click:Destroy()
-```
-
-Play looping music with a Maid-compatible handle:
-
-```lua
-local Maid = require("Maid")
-
-local maid = Maid.new()
-
-local music = maid:Add(audioClient:Play2D({
-	Name = "RoundMusic",
-	Asset = "rbxassetid://234567891",
-	Category = "Music",
-	Looping = true,
-	Volume = 0.4,
-}))
-
-music:SetVolume(0.25)
-music:Stop()
-music:Play()
-```
-
-Play positional ambience from an existing world object:
-
-```lua
-maid:GiveTask(audioClient:Play3D({
-	Name = "GeneratorHum",
-	Asset = "rbxassetid://987654321",
-	Category = "Ambience",
-	Looping = true,
-	Parent = workspace.Generator,
-}))
-```
-
-## Lifetime Management
-
-Playback and voice APIs return audio handles, not Maids. This keeps the useful
-controls available while still fitting Nevermore cleanup patterns. Every handle
-implements `Destroy()`, so it can be passed directly to `Maid:Add()` or
-`Maid:GiveTask()`.
-
-Use `Maid:Add()` when you still need to control the sound:
-
-```lua
-local music = maid:Add(audioClient:Play2D({
-	Name = "RoundMusic",
-	Asset = "rbxassetid://234567891",
-	Category = "Music",
-	Looping = true,
-}))
-
-music:SetVolume(0.5)
-```
-
-Use `Maid:GiveTask()` when ownership is all you need:
-
-```lua
-maid:GiveTask(audioClient:Play3D({
-	Name = "WindLoop",
-	Asset = "rbxassetid://345678912",
-	Category = "Ambience",
-	Looping = true,
-	Parent = workspace.Cliff,
-}))
-```
-
-For short one-shot sounds, store the handle only if you need to stop, fade, or
-destroy it manually. For looping music, ambience, emitters, and voice routes,
-own the handle with a Maid. Destroying a handle cleans up the generated audio
-instances, wires, category observers, and temporary graph folders.
-
-## Intermediate Examples
-
-Connect a settings menu to category volumes:
-
-```lua
-local connection = audioClient:ObserveCategoryVolume("Music", function(volume)
-	musicSlider.Value = volume
+Schema.Int(0, { Min = 0, Max = 999999 })
+Schema.Number(1, { Min = 0 })
+Schema.String("", { MaxLength = 24 })
+Schema.Boolean(false)
+Schema.Enum("Common", { "Common", "Rare", "Epic" })
+Schema.Optional(Schema.String("", { MaxLength = 20 }))
+Schema.Dynamic(function()
+	return os.time()
 end)
-
-maid:GiveTask(connection)
-
-musicSlider.Changed:Connect(function(volume)
-	audioClient:SetCategoryVolume("Music", volume)
+Schema.Check(0, function(value)
+	return typeof(value) == "number" and value % 5 == 0, "Expected a multiple of 5"
 end)
 ```
 
-Use a named asset with defaults:
+`Schema.Check` accepts any checker function, including an Osyris `t` checker
+that your game imports itself. `t` is not a package dependency.
+
+## Server Setup
+
+Configure before `Start()`:
 
 ```lua
-audioClient:RegisterAssets({
-	{
-		Name = "RoundAlarm",
-		Asset = "rbxassetid://345678912",
-		Category = "Alarms",
-		Looping = true,
-		Volume = 0.75,
-		EffectPresets = { "Radio" },
-	},
-})
+local require = require(script.Parent.loader).load(script)
 
-local alarm = audioClient:Play2D({
-	AssetName = "RoundAlarm",
-})
+local PlayerDataService = require("PlayerDataService")
 
-alarm:SetVolume(0.5)
+function GameDataConfiguration:Init(serviceBag)
+	self._playerData = serviceBag:GetService(PlayerDataService)
+	self._playerData:SetSchema(require("GamePlayerDataSchema"))
+	self._playerData:SetNamespace("Profile")
+end
 ```
 
-Create a custom 3D emitter with explicit distance falloff:
+The datastore layout is isolated to the configured namespace:
 
 ```lua
-local emitter = audioClient:CreateEmitter(workspace.ExplosionOrigin, {
-	Name = "ExplosionEmitter",
-	DistanceAttenuation = {
-		[0] = 1,
-		[200] = 0.65,
-		[600] = 0.2,
-		[1200] = 0,
-	},
-})
-
-audioClient:Play3D({
-	Name = "FarExplosion",
-	Asset = "rbxassetid://987654321",
-	Category = "Explosions",
-	Volume = 1,
-	Emitter = emitter,
-})
-```
-
-## Advanced Examples
-
-Build reusable distant-combat effects without hard-coding combat into the
-package:
-
-```lua
-audioClient:RegisterEffects({
-	{
-		Name = "DistantMuffle",
-		Effects = {
-			{
-				Name = "DistantEQ",
-				ClassName = "AudioEqualizer",
-				Properties = {
-					LowGain = 1,
-					MidGain = -4,
-					HighGain = -18,
-					MidRange = NumberRange.new(400, 3000),
-				},
-			},
-			{
-				Name = "DistantCompressor",
-				ClassName = "AudioCompressor",
-				Properties = {
-					Threshold = -14,
-					Ratio = 3,
-					Attack = 0.02,
-					Release = 0.25,
-				},
-			},
+{
+	Profile = {
+		Data = {},
+		Metadata = {
+			SchemaVersion = 1,
 		},
 	},
-})
 
-local shot = audioClient:Play3D({
-	Name = "FarRifleShot",
-	Asset = "rbxassetid://123456789",
-	Category = "Weapons",
-	Volume = 0.8,
-	Parent = workspace.DistantFightOrigin,
-	EffectPresets = { "DistantMuffle" },
-})
-
-shot:SetEffectBypass("DistantEQ", false)
+	Settings = {},
+}
 ```
 
-Route local voice through a generic effect chain:
+PlayerDataService only writes inside `Profile`. Sibling settings data remains
+owned by other packages.
+
+## Server API
 
 ```lua
-audioClient:SetCategoryVolume("Voice", 0.75)
-
-local filteredVoice = audioClient:CreateVoiceRoute({
-	Name = "FilteredVoice",
-	Category = "Voice",
-	Target = audioClient:EnsureDefaultOutput(),
-	EffectPresets = { "Radio" },
-})
-
-maid:GiveTask(filteredVoice)
+playerDataService:IsLoaded(player)
+playerDataService:GetProfile(player)
+playerDataService:PromiseProfile(player)
+playerDataService:ObserveProfile(player)
+playerDataService:ObserveLoadedPlayers()
 ```
 
-Apply per-playback effects when a full preset is not worth registering:
+Profiles expose safe path-based mutations:
 
 ```lua
-local underwaterAmbience = audioClient:Play2D({
-	Name = "UnderwaterAmbience",
-	Asset = "rbxassetid://456789123",
-	Category = "Ambience",
-	Looping = true,
-	Effects = {
-		{
-			Name = "UnderwaterEQ",
-			ClassName = "AudioEqualizer",
-			Properties = {
-				LowGain = 4,
-				MidGain = -8,
-				HighGain = -24,
-			},
-		},
-		{
-			Name = "UnderwaterReverb",
-			ClassName = "AudioReverb",
-			Properties = {
-				WetLevel = -8,
-				DryLevel = -2,
-			},
-		},
-	},
-})
+profile:Get("Currency.Coins")
+profile:Set("Currency.Coins", 500)
+profile:Increment("Currency.Coins", 100)
 
-underwaterAmbience:SetEffectBypass("UnderwaterReverb", true)
+profile:Batch(function(transaction)
+	transaction:Increment("Currency.Coins", 500)
+	transaction:Set("Progression.Level", 2)
+end)
+
+profile:Mutate(function(data)
+	data.Currency.Coins += 100
+end)
 ```
 
-## Common Use Cases
+They also expose a friendly accessor tree for fixed schema fields:
 
-- Settings menus: store player preferences in your game, then call
-  `SetCategoryVolume()` on the client.
-- Music: use `Play2D()` with the `Music` category and own the Maid-compatible
-  handle for as long as the music should live.
-- UI and SFX: use `Play2D()` with short-lived handles, or named assets for common
-  cues.
-- World ambience: use `Play3D()` with a world parent and optional custom emitter
-  attenuation.
-- Weapons and explosions: use `Play3D()` plus reusable effect presets for distant
-  or muffled variants.
-- Voice chat processing: create local `AudioDeviceInput` routes with
-  `CreateVoiceRoute()`. The game owns permissions, channels, and policy.
+```lua
+profile.Data.Currency.Coins:Increment(100)
+profile.Data.Progression.Level:Set(2)
+profile.Data.Inventory.Items:Observe():Subscribe(function(items)
+	renderInventory(items)
+end)
+```
 
-## API Reference
+Returned table values and snapshots are cloned/frozen so callers cannot mutate
+the authoritative profile by accident. `Delete` is allowed for
+`Schema.Optional(...)` fields and rejected for required fields.
 
-Server `AudioService`:
+## Client API
 
-| Method | Description |
-| --- | --- |
-| `GetRootFolder()` | Returns the replicated audio registry folder. |
-| `RegisterCategories(categories)` | Registers category defaults. |
-| `RegisterEffects(effectPresets)` | Registers reusable ordered effect chains. |
-| `RegisterAssets(assets)` | Registers named asset defaults. |
-| `GetCategoryVolume(categoryName)` | Returns a category volume, defaulting to `1`. |
-| `SetCategoryVolume(categoryName, volume)` | Sets a clamped `0..1` category volume. |
-| `GetCategoryVolumeChangedSignal(categoryName)` | Returns the volume changed signal. |
-| `GetAssetConfig(assetName)` | Returns a registered asset config. |
-| `GetEffectPresetConfig(presetName)` | Returns a registered effect preset config. |
+`PlayerDataServiceClient` wraps the local player's replicated state id.
 
-Client `AudioServiceClient`:
+```lua
+playerDataClient:IsReady()
+playerDataClient:PromiseReady()
+playerDataClient:Get("Currency.Coins")
+playerDataClient:GetSnapshot()
+playerDataClient:Observe("Currency.Coins")
+playerDataClient:ObserveSnapshot()
+playerDataClient:ObserveSelector(function(data)
+	return data.Progression.Experience
+end)
+```
 
-| Method | Description |
-| --- | --- |
-| `GetRootFolder()` | Returns the local `SoundService.AudioService` folder. |
-| `RegisterCategories(categories)` | Registers local category defaults. |
-| `RegisterEffects(effectPresets)` | Registers local reusable effect chains. |
-| `RegisterAssets(assets)` | Registers local named assets. |
-| `GetCategoryVolume(categoryName)` | Returns the local category volume. |
-| `SetCategoryVolume(categoryName, volume)` | Sets local category volume. |
-| `GetCategoryVolumeChangedSignal(categoryName)` | Returns the local volume changed signal. |
-| `ObserveCategoryVolume(categoryName, callback)` | Calls immediately and whenever the volume changes. |
-| `EnsureDefaultOutput()` | Returns the local default `AudioDeviceOutput`. |
-| `CreateListener(config?)` | Creates an `AudioListener` and wires it to output. |
-| `CreateEmitter(parent, config?)` | Creates an `AudioEmitter` on a world instance. |
-| `Play2D(config)` | Builds and starts a 2D `AudioPlayer` graph. |
-| `Play3D(config)` | Builds and starts a 3D `AudioPlayer` to `AudioEmitter` graph. |
-| `CreateVoiceInput(config?)` | Creates an `AudioDeviceInput` for the local player by default. |
-| `CreateVoiceRoute(config)` | Wires voice input through category/effects to an output or emitter. |
+Client code can use the same accessor style:
 
-## Supported Effects
+```lua
+playerDataClient.Data.Currency.Coins:Observe(function(coins)
+	coinsLabel.Text = tostring(coins)
+end)
+```
 
-`AudioFader`, `AudioEqualizer`, `AudioCompressor`, `AudioReverb`,
-`AudioChorus`, `AudioDistortion`, `AudioEcho`, `AudioFlanger`,
-`AudioPitchShifter`, `AudioTremolo`, `AudioFilter`, `AudioLimiter`, and
-`AudioGate`.
+`Get` and `GetSnapshot` raise if called before readiness. Observers may be
+created before readiness and emit once the initial replicated state arrives.
+The client has no general write API.
 
-Effects are applied in the order they appear. Unknown top-level config fields
-are rejected, while effect `Properties` are passed to the Roblox instance so the
-engine remains the source of truth for property support.
+## Reconciliation And Migrations
 
-## Architecture Notes
+Loading order:
 
-- Use `ServiceBag:GetService()` for `AudioService` and `AudioServiceClient`.
-- This package is a Nevermore service pair plus small shared utilities, not a
-  full game audio framework.
-- `Init` creates registries and folders only; runtime playback happens through
-  explicit API calls.
-- All generated graph handles implement `Destroy()`, so they fit naturally into
-  Nevermore `Maid` cleanup.
-- The services use `@hexium-softworks/log` for structured lifecycle and
-  registration logs; configure Log levels or sinks in your game if you want to
-  surface or suppress them.
-- No remotes are created. Server registration is a registry/default layer;
-  clients own local playback graphs and local user settings.
+1. Load `Profile.Data` and `Profile.Metadata.SchemaVersion` through Nevermore.
+2. For new profiles with no saved data, deep-copy the current template.
+3. For existing profiles, run required migrations in ascending order.
+4. Reconcile missing fields.
+5. Log and replace structurally incompatible saved values with template values.
+6. Validate the completed profile.
+7. Commit `Profile.Data` and the current schema version into Nevermore's stage.
+8. Create owner-only replicated state.
+
+Unknown saved fields are preserved for compatibility, but new writes or changes
+to unknown schema paths are rejected.
+
+## Replication
+
+Only fields wrapped in `Schema.Owner(...)` or listed in the legacy
+`Replication.Owner` section are sent to the owning player. Metadata, receipt
+state, anti-cheat fields, and anything not explicitly listed remain server-only.
+
+Projection updates are path-aware: mutating a parent table does not leak private
+sibling fields because replication diffs are computed against the filtered
+projection, not the raw profile.
+
+## Failure Policy
+
+A datastore, migration, or validation failure never creates a new profile over
+existing data. The default load failure handler kicks the player with a generic
+message. Games can provide their own safe policy:
+
+```lua
+playerDataService:SetLoadFailureHandler(function(player, failure)
+	player:Kick("Your data could not be loaded. Please rejoin.")
+end)
+```
+
+## MVP Limits
+
+- Derived replicated fields are not included yet.
+- Offline profile handles are not included yet.
+- Cross-player/public profile replication is not included yet.
